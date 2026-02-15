@@ -135,441 +135,432 @@
     </div>
 
     <script>
-        (function() {
-            // ---------- 全局变量 ----------
-            let currentUser = '池毓波';
-            // 存储图片的Map (id -> base64)
-            const localImages = new Map();
-            // 当前正在上传的目标单元格（相机触发时记录）
-            let targetCellForUpload = null;
+(function() {
+    // ---------- 全局变量 ----------
+    let currentUser = '池毓波';
+    const localImages = new Map();
+    let targetCellForUpload = null;
 
-            // 默认数据
-            const defaultData = {
-                childHealth: [
-                    ['0~6岁儿童','健康体检','出院3~7天内','满月(28~30天)','3月龄','6月龄','8~9月龄','12月龄','18月龄','24月龄','36月龄'],
-                    ['','','','','','','','','','','']
-                ],
-                maternalHealth: [
-                    ['孕产妇','健康管理','孕13周前','孕16-24周','孕24-28周','孕28-32周','孕32-36周','孕37-40周','产后7天内','产后28天','产后42天'],
-                    ['','','','','','','','','','','']
-                ],
-                childTcm: [
-                    ['0~6岁儿童','中医药健康管理','6月龄','12月龄','18月龄','24月龄','30月龄','36月龄','---','---','---']
-                ]
-            };
-            const tableConfig = [
-                { id: 'childHealth', tbodyId: 'childHealthBody', defaultRows: defaultData.childHealth },
-                { id: 'maternalHealth', tbodyId: 'maternalHealthBody', defaultRows: defaultData.maternalHealth },
-                { id: 'childTcm', tbodyId: 'childTcmBody', defaultRows: defaultData.childTcm }
-            ];
+    const defaultData = {
+        childHealth: [
+            ['0~6岁儿童','健康体检','出院3~7天内','满月(28~30天)','3月龄','6月龄','8~9月龄','12月龄','18月龄','24月龄','36月龄'],
+            ['池哲洋','健康体检','','','','','','','','','']
+        ],
+        maternalHealth: [
+            ['孕产妇','健康管理','孕13周前','孕16-24周','孕24-28周','孕28-32周','孕32-36周','孕37-40周','出院3~7天内','产后28天','产后42天'],
+            ['林晓云','健康管理','','','','','','','','','']
+        ],
+        childTcm: [
+            ['0~6岁儿童','中医药健康管理','6月龄','12月龄','18月龄','24月龄','30月龄','36月龄','---','---','---']
+        ]
+    };
+    const tableConfig = [
+        { id: 'childHealth', tbodyId: 'childHealthBody', defaultRows: defaultData.childHealth },
+        { id: 'maternalHealth', tbodyId: 'maternalHealthBody', defaultRows: defaultData.maternalHealth },
+        { id: 'childTcm', tbodyId: 'childTcmBody', defaultRows: defaultData.childTcm }
+    ];
 
-            // ---------- 初始化 ----------
-            document.addEventListener('DOMContentLoaded', function() {
-                // 加载所有图片到Map
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    if (key && key.startsWith('img_')) {
-                        localImages.set(key.substring(4), localStorage.getItem(key));
+    // 优先从内联数据恢复localStorage
+    function loadInlineData() {
+        const script = document.getElementById('inlineData');
+        if (script) {
+            try {
+                const data = JSON.parse(script.textContent);
+                for (let key in data) {
+                    localStorage.setItem(key, data[key]);
+                }
+                script.remove();
+            } catch (e) {}
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadInlineData();
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('img_')) {
+                localImages.set(key.substring(4), localStorage.getItem(key));
+            }
+        }
+        loadAllTables();
+        document.getElementById('loginModal').classList.remove('active');
+        document.getElementById('mainContainer').style.display = 'block';
+        document.getElementById('userNameDisplay').textContent = currentUser;
+        document.getElementById('userAvatar').textContent = currentUser.charAt(0);
+        setupEventListeners();
+        updateLastSyncTime();
+    });
+
+    function loadAllTables() {
+        tableConfig.forEach(cfg => {
+            const stored = loadTableData(cfg.id);
+            if (stored) buildTable(cfg.tbodyId, stored);
+            else buildTable(cfg.tbodyId, cfg.defaultRows);
+        });
+    }
+
+    function loadTableData(tableId) {
+        const prefix = tableId + '_';
+        const rowsMap = new Map();
+        let maxRow = -1;
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(prefix)) {
+                const parts = key.substring(prefix.length).split('_');
+                if (parts.length === 2) {
+                    const r = parseInt(parts[0]), c = parseInt(parts[1]);
+                    if (!isNaN(r) && !isNaN(c)) {
+                        try {
+                            const data = JSON.parse(localStorage.getItem(key));
+                            if (!rowsMap.has(r)) rowsMap.set(r, new Map());
+                            rowsMap.get(r).set(c, data);
+                            if (r > maxRow) maxRow = r;
+                        } catch (e) {}
                     }
                 }
-                // 加载表格数据
-                loadAllTables();
-                // 自动登录（跳过模态框）
-                document.getElementById('loginModal').classList.remove('active');
-                document.getElementById('mainContainer').style.display = 'block';
-                document.getElementById('userNameDisplay').textContent = currentUser;
-                document.getElementById('userAvatar').textContent = currentUser.charAt(0);
-                setupEventListeners();
-                updateLastSyncTime();
-            });
-
-            function loadAllTables() {
-                tableConfig.forEach(cfg => {
-                    const stored = loadTableData(cfg.id);
-                    if (stored) buildTable(cfg.tbodyId, stored);
-                    else buildTable(cfg.tbodyId, cfg.defaultRows);
-                });
             }
+        }
+        if (maxRow < 0) return null;
+        const rows = [];
+        for (let r = 0; r <= maxRow; r++) {
+            const rowData = [];
+            for (let c = 0; c < 11; c++) {
+                const cell = rowsMap.get(r)?.get(c) || { text: '', images: [] };
+                rowData.push(cell);
+            }
+            rows.push(rowData);
+        }
+        return rows;
+    }
 
-            // 从localStorage读取某个表格的数据，返回二维数组或null
-            function loadTableData(tableId) {
-                const prefix = tableId + '_';
-                const rowsMap = new Map(); // row -> Map(col -> {text, images})
-                let maxRow = -1;
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    if (key && key.startsWith(prefix)) {
-                        const parts = key.substring(prefix.length).split('_');
-                        if (parts.length === 2) {
-                            const r = parseInt(parts[0]), c = parseInt(parts[1]);
-                            if (!isNaN(r) && !isNaN(c)) {
-                                try {
-                                    const data = JSON.parse(localStorage.getItem(key));
-                                    if (!rowsMap.has(r)) rowsMap.set(r, new Map());
-                                    rowsMap.get(r).set(c, data);
-                                    if (r > maxRow) maxRow = r;
-                                } catch (e) {}
-                            }
-                        }
-                    }
+    function buildTable(tbodyId, rows) {
+        const tbody = document.getElementById(tbodyId);
+        tbody.innerHTML = '';
+        rows.forEach((row, r) => {
+            const tr = document.createElement('tr');
+            for (let c = 0; c < 11; c++) {
+                const cellData = row[c] || { text: '', images: [] };
+                let text = '', images = [];
+                if (typeof cellData === 'string') text = cellData;
+                else { text = cellData.text || ''; images = cellData.images || []; }
+
+                const td = document.createElement('td');
+                td.className = 'editable';
+                td.setAttribute('contenteditable', 'true');
+                td.setAttribute('data-row', r);
+                td.setAttribute('data-col', c);
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'cell-content';
+                if (text) {
+                    const span = document.createElement('span');
+                    span.textContent = text;
+                    contentDiv.appendChild(span);
                 }
-                if (maxRow < 0) return null;
-                // 构建二维数组
-                const rows = [];
-                for (let r = 0; r <= maxRow; r++) {
-                    const rowData = [];
-                    for (let c = 0; c < 11; c++) {
-                        const cell = rowsMap.get(r)?.get(c) || { text: '', images: [] };
-                        rowData.push(cell);
+                images.forEach(imgId => {
+                    const imgData = localImages.get(imgId) || localStorage.getItem('img_' + imgId);
+                    if (imgData) {
+                        if (!localImages.has(imgId)) localImages.set(imgId, imgData);
+                        contentDiv.appendChild(createImageElement(imgId, imgData, td));
                     }
-                    rows.push(rowData);
-                }
-                return rows;
-            }
-
-            // 根据二维数组构建表格 (rows: 数组，每个元素是 {text, images} 或 纯文本)
-            function buildTable(tbodyId, rows) {
-                const tbody = document.getElementById(tbodyId);
-                tbody.innerHTML = '';
-                rows.forEach((row, r) => {
-                    const tr = document.createElement('tr');
-                    for (let c = 0; c < 11; c++) {
-                        const cellData = row[c] || { text: '', images: [] };
-                        // 兼容纯文本格式
-                        let text = '', images = [];
-                        if (typeof cellData === 'string') text = cellData;
-                        else { text = cellData.text || ''; images = cellData.images || []; }
-
-                        const td = document.createElement('td');
-                        td.className = 'editable';
-                        td.setAttribute('contenteditable', 'true');
-                        td.setAttribute('data-row', r);
-                        td.setAttribute('data-col', c);
-
-                        const contentDiv = document.createElement('div');
-                        contentDiv.className = 'cell-content';
-                        if (text) {
-                            const span = document.createElement('span');
-                            span.textContent = text;
-                            contentDiv.appendChild(span);
-                        }
-                        // 添加图片
-                        images.forEach(imgId => {
-                            const imgData = localImages.get(imgId) || localStorage.getItem('img_' + imgId);
-                            if (imgData) {
-                                if (!localImages.has(imgId)) localImages.set(imgId, imgData);
-                                contentDiv.appendChild(createImageElement(imgId, imgData, td));
-                            }
-                        });
-                        td.appendChild(contentDiv);
-
-                        // 相机按钮
-                        const uploadBtn = document.createElement('button');
-                        uploadBtn.className = 'image-upload-btn';
-                        uploadBtn.innerHTML = '📷';
-                        uploadBtn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            // 直接记录目标单元格，弹出文件选择
-                            targetCellForUpload = td;
-                            document.getElementById('imageUploadInput').click();
-                        });
-                        td.appendChild(uploadBtn);
-                        tr.appendChild(td);
-                    }
-                    tbody.appendChild(tr);
                 });
-            }
+                td.appendChild(contentDiv);
 
-            // 创建图片元素
-            function createImageElement(imgId, imgData, cell) {
-                const container = document.createElement('div');
-                container.className = 'image-container';
-                const img = document.createElement('img');
-                img.className = 'cell-image';
-                img.src = imgData;
-                img.setAttribute('data-image-id', imgId);
-                img.addEventListener('click', () => {
-                    document.getElementById('viewerImage').src = imgData;
-                    document.getElementById('imageViewer').classList.add('active');
-                });
-                const removeBtn = document.createElement('div');
-                removeBtn.className = 'image-remove';
-                removeBtn.innerHTML = '×';
-                removeBtn.addEventListener('click', (e) => {
+                const uploadBtn = document.createElement('button');
+                uploadBtn.className = 'image-upload-btn';
+                uploadBtn.innerHTML = '📷';
+                uploadBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    // 移除图片
-                    container.remove();
-                    // 删除存储
-                    try { localStorage.removeItem('img_' + imgId); localImages.delete(imgId); } catch(e) {}
-                    saveCellData(cell);
-                    showMessage('图片已移除');
+                    targetCellForUpload = td;
+                    document.getElementById('imageUploadInput').click();
                 });
-                container.appendChild(img);
-                container.appendChild(removeBtn);
-                return container;
+                td.appendChild(uploadBtn);
+                tr.appendChild(td);
             }
+            tbody.appendChild(tr);
+        });
+    }
 
-            // ---------- 核心：图片上传 ----------
-            document.getElementById('imageUploadInput').addEventListener('change', function(e) {
-                const file = e.target.files[0];
-                const cell = targetCellForUpload; // 使用相机点击时记录的单元格
-                if (!file || !cell) {
-                    targetCellForUpload = null;
-                    return;
-                }
-                if (!file.type.startsWith('image/')) {
-                    showMessage('请选择图片文件', 'error');
-                    targetCellForUpload = null;
-                    return;
-                }
-                if (file.size > 5 * 1024 * 1024) {
-                    showMessage('图片不能超过5MB', 'error');
-                    targetCellForUpload = null;
-                    return;
-                }
+    function createImageElement(imgId, imgData, cell) {
+        const container = document.createElement('div');
+        container.className = 'image-container';
+        const img = document.createElement('img');
+        img.className = 'cell-image';
+        img.src = imgData;
+        img.setAttribute('data-image-id', imgId);
+        img.addEventListener('click', () => {
+            document.getElementById('viewerImage').src = imgData;
+            document.getElementById('imageViewer').classList.add('active');
+        });
+        const removeBtn = document.createElement('div');
+        removeBtn.className = 'image-remove';
+        removeBtn.innerHTML = '×';
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            container.remove();
+            localStorage.removeItem('img_' + imgId);
+            localImages.delete(imgId);
+            saveCellData(cell);
+            showMessage('图片已移除');
+        });
+        container.appendChild(img);
+        container.appendChild(removeBtn);
+        return container;
+    }
+
+    document.getElementById('imageUploadInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        const cell = targetCellForUpload;
+        if (!file || !cell) { targetCellForUpload = null; return; }
+        if (!file.type.startsWith('image/')) {
+            showMessage('请选择图片文件', 'error');
+            targetCellForUpload = null;
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            showMessage('图片不能超过5MB', 'error');
+            targetCellForUpload = null;
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            addImageToCell(cell, ev.target.result);
+            targetCellForUpload = null;
+        };
+        reader.readAsDataURL(file);
+        e.target.value = '';
+    });
+
+    document.addEventListener('paste', function(e) {
+        const cell = document.activeElement?.closest('td.editable');
+        if (!cell) return;
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                e.preventDefault();
+                const blob = items[i].getAsFile();
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     addImageToCell(cell, ev.target.result);
-                    targetCellForUpload = null; // 释放
                 };
-                reader.readAsDataURL(file);
-                e.target.value = '';
+                reader.readAsDataURL(blob);
+                break;
+            }
+        }
+    });
+
+    function addImageToCell(cell, imageData) {
+        const contentDiv = cell.querySelector('.cell-content');
+        if (!contentDiv) return;
+        const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+        try {
+            localStorage.setItem('img_' + imageId, imageData);
+            localImages.set(imageId, imageData);
+        } catch (e) {
+            showMessage('存储空间不足', 'error');
+            return;
+        }
+        const imgContainer = createImageElement(imageId, imageData, cell);
+        contentDiv.appendChild(imgContainer);
+        saveCellData(cell);
+        showMessage('图片已添加', 'success');
+    }
+
+    function saveCellData(cell) {
+        const row = cell.getAttribute('data-row');
+        const col = cell.getAttribute('data-col');
+        const tableId = getTableIdFromCell(cell);
+        if (!tableId) return;
+        const contentDiv = cell.querySelector('.cell-content');
+        let text = '';
+        const images = [];
+        for (let node of contentDiv.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
+            else if (node.nodeName === 'SPAN') text += node.textContent;
+            else if (node.nodeName === 'DIV' && node.classList.contains('image-container')) {
+                const img = node.querySelector('img');
+                if (img) images.push(img.getAttribute('data-image-id'));
+            }
+        }
+        try {
+            localStorage.setItem(`${tableId}_${row}_${col}`, JSON.stringify({ text: text.trim(), images }));
+        } catch (e) {}
+    }
+
+    function getTableIdFromCell(cell) {
+        if (cell.closest('#childHealthBody')) return 'childHealth';
+        if (cell.closest('#maternalHealthBody')) return 'maternalHealth';
+        if (cell.closest('#childTcmBody')) return 'childTcm';
+        return null;
+    }
+
+    function showMessage(msg, type = 'info') {
+        const old = document.querySelector('.message-popup');
+        if (old) old.remove();
+        const div = document.createElement('div');
+        div.className = 'message-popup';
+        div.textContent = msg;
+        div.style.backgroundColor = type === 'success' ? '#4CAF50' : (type === 'error' ? '#f44336' : '#2196F3');
+        document.body.appendChild(div);
+        setTimeout(() => {
+            div.style.opacity = '0';
+            setTimeout(() => div.remove(), 300);
+        }, 2500);
+    }
+
+    function updateLastSyncTime() {
+        document.getElementById('lastSyncTime').textContent = '最后保存: ' + new Date().toLocaleTimeString();
+    }
+
+    function setupEventListeners() {
+        document.getElementById('logoutButton').addEventListener('click', () => {
+            if (confirm('退出登录？')) location.reload();
+        });
+
+        document.getElementById('saveData').addEventListener('click', () => {
+            saveAllData();
+            showMessage('数据已保存', 'success');
+        });
+
+        document.getElementById('downloadHTML').addEventListener('click', () => {
+            const data = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                data[key] = localStorage.getItem(key);
+            }
+            const dataJSON = JSON.stringify(data);
+            const script = document.createElement('script');
+            script.id = 'inlineData';
+            script.type = 'application/json';
+            script.textContent = dataJSON;
+            document.head.appendChild(script);
+
+            const html = document.documentElement.outerHTML;
+            script.remove();
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `健康协作_${new Date().toISOString().slice(0,10)}.html`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        });
+
+        document.getElementById('downloadWord').addEventListener('click', () => {
+            const content = '中仙村健康管理数据...'; // 可自行扩展
+            const blob = new Blob([content], { type: 'application/msword' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '健康管理.doc';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        });
+
+        document.getElementById('shareButton').addEventListener('click', () => {
+            alert('请复制当前页面链接分享给好友。');
+        });
+
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                document.getElementById(this.dataset.tab).classList.add('active');
             });
+        });
 
-            // 粘贴图片
-            document.addEventListener('paste', function(e) {
-                // 获取当前拥有焦点的单元格
-                const cell = document.activeElement?.closest('td.editable');
-                if (!cell) return; // 焦点不在可编辑单元格上
-                const items = e.clipboardData.items;
-                for (let i = 0; i < items.length; i++) {
-                    if (items[i].type.indexOf('image') !== -1) {
-                        e.preventDefault();
-                        const blob = items[i].getAsFile();
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                            addImageToCell(cell, ev.target.result);
-                        };
-                        reader.readAsDataURL(blob);
-                        break;
+        document.getElementById('addChildRow').addEventListener('click', () => addRow('childHealthBody'));
+        document.getElementById('addMaternalRow').addEventListener('click', () => addRow('maternalHealthBody'));
+        document.getElementById('addTcmRow').addEventListener('click', () => addRow('childTcmBody'));
+
+        document.getElementById('clearChildRows').addEventListener('click', () => clearEmptyRows('childHealthBody', 'childHealth'));
+        document.getElementById('clearMaternalRows').addEventListener('click', () => clearEmptyRows('maternalHealthBody', 'maternalHealth'));
+        document.getElementById('clearTcmRows').addEventListener('click', () => clearEmptyRows('childTcmBody', 'childTcm'));
+
+        document.addEventListener('input', e => {
+            if (e.target.classList.contains('editable')) {
+                saveCellData(e.target);
+            }
+        });
+        document.addEventListener('blur', e => {
+            if (e.target.classList.contains('editable')) {
+                saveCellData(e.target);
+            }
+        }, true);
+
+        document.getElementById('closeImageViewer').addEventListener('click', () => {
+            document.getElementById('imageViewer').classList.remove('active');
+        });
+    }
+
+    function saveAllData() {
+        tableConfig.forEach(cfg => {
+            document.querySelectorAll(`#${cfg.tbodyId} td`).forEach(td => saveCellData(td));
+        });
+        updateLastSyncTime();
+    }
+
+    function addRow(tbodyId) {
+        const tbody = document.getElementById(tbodyId);
+        const rowIdx = tbody.children.length;
+        const tr = document.createElement('tr');
+        for (let c = 0; c < 11; c++) {
+            const td = document.createElement('td');
+            td.className = 'editable';
+            td.setAttribute('contenteditable', 'true');
+            td.setAttribute('data-row', rowIdx);
+            td.setAttribute('data-col', c);
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'cell-content';
+            td.appendChild(contentDiv);
+            const uploadBtn = document.createElement('button');
+            uploadBtn.className = 'image-upload-btn';
+            uploadBtn.innerHTML = '📷';
+            uploadBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                targetCellForUpload = td;
+                document.getElementById('imageUploadInput').click();
+            });
+            td.appendChild(uploadBtn);
+            tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        showMessage('新行已添加');
+    }
+
+    function clearEmptyRows(tbodyId, tableId) {
+        const tbody = document.getElementById(tbodyId);
+        const rows = Array.from(tbody.children);
+        let removed = 0;
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const row = rows[i];
+            let empty = true;
+            row.querySelectorAll('td').forEach(td => {
+                const content = td.querySelector('.cell-content');
+                if (content) {
+                    if (content.textContent.trim() !== '' || content.querySelectorAll('.image-container').length > 0) {
+                        empty = false;
                     }
                 }
             });
-
-            // 添加图片到单元格
-            function addImageToCell(cell, imageData) {
-                const contentDiv = cell.querySelector('.cell-content');
-                if (!contentDiv) return;
-                const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
-                try {
-                    localStorage.setItem('img_' + imageId, imageData);
-                    localImages.set(imageId, imageData);
-                } catch (e) {
-                    showMessage('存储空间不足', 'error');
-                    return;
-                }
-                const imgContainer = createImageElement(imageId, imageData, cell);
-                contentDiv.appendChild(imgContainer);
-                saveCellData(cell);
-                showMessage('图片已添加', 'success');
+            if (empty) {
+                row.remove();
+                removed++;
             }
-
-            // 保存单元格数据到localStorage
-            function saveCellData(cell) {
-                const row = cell.getAttribute('data-row');
-                const col = cell.getAttribute('data-col');
-                const tableId = getTableIdFromCell(cell);
-                if (!tableId) return;
-                const contentDiv = cell.querySelector('.cell-content');
-                let text = '';
-                const images = [];
-                for (let node of contentDiv.childNodes) {
-                    if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
-                    else if (node.nodeName === 'SPAN') text += node.textContent;
-                    else if (node.nodeName === 'DIV' && node.classList.contains('image-container')) {
-                        const img = node.querySelector('img');
-                        if (img) images.push(img.getAttribute('data-image-id'));
-                    }
-                }
-                try {
-                    localStorage.setItem(`${tableId}_${row}_${col}`, JSON.stringify({ text: text.trim(), images }));
-                } catch (e) {}
-            }
-
-            function getTableIdFromCell(cell) {
-                if (cell.closest('#childHealthBody')) return 'childHealth';
-                if (cell.closest('#maternalHealthBody')) return 'maternalHealth';
-                if (cell.closest('#childTcmBody')) return 'childTcm';
-                return null;
-            }
-
-            // ---------- 辅助函数 ----------
-            function showMessage(msg, type = 'info') {
-                const old = document.querySelector('.message-popup');
-                if (old) old.remove();
-                const div = document.createElement('div');
-                div.className = 'message-popup';
-                div.textContent = msg;
-                div.style.backgroundColor = type === 'success' ? '#4CAF50' : (type === 'error' ? '#f44336' : '#2196F3');
-                document.body.appendChild(div);
-                setTimeout(() => {
-                    div.style.opacity = '0';
-                    setTimeout(() => div.remove(), 300);
-                }, 2500);
-            }
-
-            function updateLastSyncTime() {
-                document.getElementById('lastSyncTime').textContent = '最后保存: ' + new Date().toLocaleTimeString();
-            }
-
-            // ---------- 事件绑定 ----------
-            function setupEventListeners() {
-                // 退出按钮
-                document.getElementById('logoutButton').addEventListener('click', () => {
-                    if (confirm('退出登录？')) location.reload();
+        }
+        if (removed) {
+            tbody.querySelectorAll('tr').forEach((tr, newRow) => {
+                tr.querySelectorAll('td').forEach((td, col) => {
+                    td.setAttribute('data-row', newRow);
+                    saveCellData(td);
                 });
-
-                // 保存按钮
-                document.getElementById('saveData').addEventListener('click', () => {
-                    saveAllData();
-                    showMessage('数据已保存', 'success');
-                });
-
-                // 下载HTML
-                document.getElementById('downloadHTML').addEventListener('click', () => {
-                    const html = document.documentElement.outerHTML;
-                    const blob = new Blob([html], { type: 'text/html' });
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob);
-                    a.download = `健康协作_${new Date().toISOString().slice(0,10)}.html`;
-                    a.click();
-                    URL.revokeObjectURL(a.href);
-                });
-
-                // 下载Word (简单示例)
-                document.getElementById('downloadWord').addEventListener('click', () => {
-                    const content = '中仙村健康管理数据...'; // 可自行扩展
-                    const blob = new Blob([content], { type: 'application/msword' });
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob);
-                    a.download = '健康管理.doc';
-                    a.click();
-                    URL.revokeObjectURL(a.href);
-                });
-
-                // 分享按钮
-                document.getElementById('shareButton').addEventListener('click', () => {
-                    alert('请复制当前页面链接分享给好友。');
-                });
-
-                // 标签切换
-                document.querySelectorAll('.tab-button').forEach(btn => {
-                    btn.addEventListener('click', function() {
-                        document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-                        this.classList.add('active');
-                        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                        document.getElementById(this.dataset.tab).classList.add('active');
-                    });
-                });
-
-                // 添加行
-                document.getElementById('addChildRow').addEventListener('click', () => addRow('childHealthBody'));
-                document.getElementById('addMaternalRow').addEventListener('click', () => addRow('maternalHealthBody'));
-                document.getElementById('addTcmRow').addEventListener('click', () => addRow('childTcmBody'));
-
-                // 清空白行
-                document.getElementById('clearChildRows').addEventListener('click', () => clearEmptyRows('childHealthBody', 'childHealth'));
-                document.getElementById('clearMaternalRows').addEventListener('click', () => clearEmptyRows('maternalHealthBody', 'maternalHealth'));
-                document.getElementById('clearTcmRows').addEventListener('click', () => clearEmptyRows('childTcmBody', 'childTcm'));
-
-                // 自动保存输入
-                document.addEventListener('input', e => {
-                    if (e.target.classList.contains('editable')) {
-                        saveCellData(e.target);
-                    }
-                });
-                // 失焦保存
-                document.addEventListener('blur', e => {
-                    if (e.target.classList.contains('editable')) {
-                        saveCellData(e.target);
-                    }
-                }, true);
-
-                // 图片查看器关闭
-                document.getElementById('closeImageViewer').addEventListener('click', () => {
-                    document.getElementById('imageViewer').classList.remove('active');
-                });
-            }
-
-            function saveAllData() {
-                tableConfig.forEach(cfg => {
-                    document.querySelectorAll(`#${cfg.tbodyId} td`).forEach(td => saveCellData(td));
-                });
-                updateLastSyncTime();
-            }
-
-            function addRow(tbodyId) {
-                const tbody = document.getElementById(tbodyId);
-                const rowIdx = tbody.children.length;
-                const tr = document.createElement('tr');
-                for (let c = 0; c < 11; c++) {
-                    const td = document.createElement('td');
-                    td.className = 'editable';
-                    td.setAttribute('contenteditable', 'true');
-                    td.setAttribute('data-row', rowIdx);
-                    td.setAttribute('data-col', c);
-                    const contentDiv = document.createElement('div');
-                    contentDiv.className = 'cell-content';
-                    td.appendChild(contentDiv);
-                    const uploadBtn = document.createElement('button');
-                    uploadBtn.className = 'image-upload-btn';
-                    uploadBtn.innerHTML = '📷';
-                    uploadBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        targetCellForUpload = td;
-                        document.getElementById('imageUploadInput').click();
-                    });
-                    td.appendChild(uploadBtn);
-                    tr.appendChild(td);
-                }
-                tbody.appendChild(tr);
-                showMessage('新行已添加');
-            }
-
-            function clearEmptyRows(tbodyId, tableId) {
-                const tbody = document.getElementById(tbodyId);
-                const rows = Array.from(tbody.children);
-                let removed = 0;
-                for (let i = rows.length - 1; i >= 0; i--) {
-                    const row = rows[i];
-                    let empty = true;
-                    row.querySelectorAll('td').forEach(td => {
-                        const content = td.querySelector('.cell-content');
-                        if (content) {
-                            if (content.textContent.trim() !== '' || content.querySelectorAll('.image-container').length > 0) {
-                                empty = false;
-                            }
-                        }
-                    });
-                    if (empty) {
-                        row.remove();
-                        removed++;
-                    }
-                }
-                if (removed) {
-                    // 重新索引行号
-                    tbody.querySelectorAll('tr').forEach((tr, newRow) => {
-                        tr.querySelectorAll('td').forEach((td, col) => {
-                            td.setAttribute('data-row', newRow);
-                            saveCellData(td);
-                        });
-                    });
-                    showMessage(`已清除 ${removed} 个空行`);
-                } else {
-                    showMessage('没有空行');
-                }
-            }
-        })();
-    </script>
+            });
+            showMessage(`已清除 ${removed} 个空行`);
+        } else {
+            showMessage('没有空行');
+        }
+    }
+})();
+</script>
 
 </body></html>
